@@ -1,0 +1,27 @@
+# anvilkit-codegen trusted harness configuration (reviewed, secret-free;
+# baked into the image at /etc/anvilkit/anvilkit-codegen/config.yaml,
+# root-owned and unreadable by the candidate UID). Precedence is defaults <
+# this file < the launch facts the Job template injects (ANVILKIT_LAUNCH_ID,
+# ANVILKIT_ATTEMPT_ID, ANVILKIT_LAUNCH_ENVELOPE); no other environment
+# variable is accepted and the launch facts are refused inside this file.
+paths:
+  workspace: /workspace            # emptyDir; the candidate creates and owns /workspace/w
+  verdict: /anvilkit/verdict       # emptyDir; chmod 0700 by the supervisor before the candidate starts
+  sockets: /run/anvilkit/sockets   # the sidecar's directory (read-only mount here)
+  agent_dir: /anvilkit/agent       # explicit read-only trusted resources (root 0700)
+  fixtures: /anvilkit/fixtures     # protected inputs of the fixed task (root 0700)
+  termination_log: /dev/termination-log
+candidate:
+  uid: 10001
+  gid: 10001
+  program: /usr/local/bin/anvilkit-codegen-candidate
+  timeout: 5m
+  max_output_bytes: 8388608
+  probe_targets: ["127.0.0.1:9", "[::1]:9", "169.254.169.254:80"]
+sidecar:
+  uid: 10002
+  wait: 60s
+  request_timeout: 60s
+  max_input_bytes: 67108864     # bound of one input loaded through the sidecar (P13-04)
+observer:
+  identity: anvilkit-codegen-supervisor
