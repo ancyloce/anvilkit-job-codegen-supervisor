@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "systemPrompt": "Trusted resource entrypoint of the codegen harness. Only this file, in the explicit read-only agent directory, is loaded; no AGENTS.md, .pi, SYSTEM.md, extension, skill or settings file of a candidate workspace is discovered.",
+  "tools": [],
+  "skills": []
+}
