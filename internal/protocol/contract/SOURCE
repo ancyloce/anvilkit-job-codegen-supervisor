@@ -1,0 +1,4 @@
+# Verbatim copies of anvilkit-agent-contracts jobs/codegen/ (the single source of the
+# codegen process protocol). Refresh and verify with tools/sync-protocol.sh; never edit here.
+jobs/codegen/protocol.schema.json sha256:2f53c4b30b9286c1ef99b995e66b4af1d6d29b97bea6ed785419fc776512cc5e
+jobs/codegen/fixtures.json sha256:46c89b4197d351c009de1a7f276a2b6dcdcc306a3ecdac3177ade566cbd6d383

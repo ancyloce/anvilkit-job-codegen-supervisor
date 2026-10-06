@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:anvilkit:codegen-protocol:v1",
+  "title": "Codegen Job process protocol (supervisor and team coordinator)",
+  "description": "The process protocol inside one codegen Job container (DD-03 §1–§5): the trusted Go supervisor (anvilkit-job-codegen-supervisor) starts the trusted team coordinator (anvilkit-job-codegen-team) as its child and serves it over the coordinator's stdio. Transport: newline-delimited JSON; requests (runCandidate) on the coordinator's stdout, answers (candidateEnded or refused) on its stdin; one UTF-8 JSON object per line of at most maxLineBytes bytes including the newline; duplicate member names, null members, comments and trailing data are refused. At most one request is outstanding: the supervisor answers a request only after the candidate round ended and its stop was confirmed, and reads the next request only after that. requestId increases strictly from request to request; round increases strictly and names the round directory <workspace>/round/<round>, which the coordinator created as a real directory of its own identity. A line that is not a valid request ends the protocol: the supervisor stops the coordinator and every candidate process, confirms the stop and fails the launch. An answer the coordinator did not ask for, or one for another round, ends the run the same way on its side. The team result (teamResult) is a file in the verdict tree (team/result.json), written once by the coordinator before it exits, at most maxResultBytes. A refusal with code STOP_NOT_ESTABLISHED or CANDIDATE_NOT_RUN is final for the launch: nothing is sealed or submitted after it and no further round runs.",
+  "$defs": {
+    "protocolVersion": { "const": 1 },
+    "maxLineBytes": { "type": "integer", "const": 65536 },
+    "maxResultBytes": { "type": "integer", "const": 262144 },
+    "requestId": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "round": { "type": "integer", "minimum": 1, "maximum": 64 },
+    "roundDir": {
+      "description": "Absolute, clean path whose last two segments are round/<round>; the supervisor additionally requires it to equal <workspace>/round/<round> of its own configuration and to be a real directory (no link on the way) owned by its own identity and not writable by group or others.",
+      "type": "string",
+      "maxLength": 4096,
+      "pattern": "^(?:/(?:[A-Za-z0-9_-]|\\.[A-Za-z0-9_-]|\\.\\.[A-Za-z0-9._-])[A-Za-z0-9._-]*)*/round/(?:[1-9]|[1-5][0-9]|6[0-4])$"
+    },
+    "timestamp": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$" },
+    "stopReason": {
+      "description": "Why candidate execution ended: the leader exited on its own (exited), the candidate's or the team's bound was reached (timeout), the launch or the team ended first (canceled). In every case every candidate process was stopped and the supervisor confirmed from /proc that none is left before answering.",
+      "enum": ["exited", "timeout", "canceled"]
+    },
+    "refusalCode": {
+      "description": "ROUND_NOT_NEW: the round is not greater than every round served. ROUND_DIR_INVALID: the directory is not the round's directory as the supervisor requires it. TEAM_ENDED: the team's bound, the launch's cancellation or an earlier final refusal ended candidate execution. CANDIDATE_NOT_RUN (final): the candidate could not be started or its privilege drop was refused. STOP_NOT_ESTABLISHED (final): the supervisor could not confirm that no candidate process is left.",
+      "enum": ["ROUND_NOT_NEW", "ROUND_DIR_INVALID", "TEAM_ENDED", "CANDIDATE_NOT_RUN", "STOP_NOT_ESTABLISHED"]
+    },
+    "failureCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" },
+    "runCandidate": {
+      "description": "Coordinator to supervisor: run the reviewed coder program as the candidate for this round. Program, identity, environment and bounds are the supervisor's reviewed configuration; the request names nothing else.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "protocolVersion", "requestId", "round", "roundDir"],
+      "properties": {
+        "type": { "const": "run-candidate" },
+        "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+        "requestId": { "$ref": "#/$defs/requestId" },
+        "round": { "$ref": "#/$defs/round" },
+        "roundDir": { "$ref": "#/$defs/roundDir" }
+      }
+    },
+    "candidateEnded": {
+      "description": "Supervisor to coordinator: how the candidate of the round ended, after every candidate process was stopped and confirmed gone. exit is the leader's exit status, null when a signal ended it (then signal names it).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "protocolVersion", "requestId", "round", "stop", "exit", "descendantsStopped", "startedAt", "endedAt"],
+      "properties": {
+        "type": { "const": "candidate-ended" },
+        "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+        "requestId": { "$ref": "#/$defs/requestId" },
+        "round": { "$ref": "#/$defs/round" },
+        "stop": { "$ref": "#/$defs/stopReason" },
+        "exit": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+        "signal": { "type": "string", "pattern": "^[a-z0-9][a-z0-9 ]{0,47}$" },
+        "descendantsStopped": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "endedAt": { "$ref": "#/$defs/timestamp" }
+      },
+      "if": { "properties": { "exit": { "type": "null" } } },
+      "then": { "required": ["signal"] },
+      "else": { "not": { "required": ["signal"] } }
+    },
+    "refused": {
+      "description": "Supervisor to coordinator: the round did not run, or its outcome cannot be established.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "protocolVersion", "requestId", "round", "code", "reason"],
+      "properties": {
+        "type": { "const": "refused" },
+        "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+        "requestId": { "$ref": "#/$defs/requestId" },
+        "round": { "$ref": "#/$defs/round" },
+        "code": { "$ref": "#/$defs/refusalCode" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 300 }
+      }
+    },
+    "answer": { "oneOf": [{ "$ref": "#/$defs/candidateEnded" }, { "$ref": "#/$defs/refused" }] },
+    "teamOutcomeKind": {
+      "enum": ["certified", "repairable", "invalid", "infrastructure_failed", "validation_unavailable", "budget_exhausted", "deadline", "model_denied", "effect_uncertain", "canceled", "failed"]
+    },
+    "teamResult": {
+      "description": "The coordinator's account of the run (team/result.json): controlled identities, classes and counts only. The supervisor reports completion only for exit status 0 with a stageId; Control's accepted stage stays the authority.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "outcome", "verdict", "failureCode"],
+      "properties": {
+        "protocolVersion": { "$ref": "#/$defs/protocolVersion" },
+        "outcome": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "detail"],
+          "properties": {
+            "kind": { "$ref": "#/$defs/teamOutcomeKind" },
+            "failureCode": { "$ref": "#/$defs/failureCode" },
+            "detail": { "type": "string", "maxLength": 1000 },
+            "round": { "$ref": "#/$defs/round" }
+          }
+        },
+        "verdict": { "enum": ["certified", "repairable", "invalid", "infrastructure_failed", "canceled"] },
+        "failureCode": { "type": "string", "pattern": "^(?:[A-Z][A-Z0-9_]{0,63})?$" },
+        "stageId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "existing": { "type": "boolean" },
+        "counters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rounds", "reviewRounds", "repairs"],
+          "properties": {
+            "rounds": { "type": "integer", "minimum": 0, "maximum": 64 },
+            "reviewRounds": { "type": "integer", "minimum": 0, "maximum": 64 },
+            "repairs": { "type": "integer", "minimum": 0, "maximum": 64 }
+          }
+        },
+        "calls": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "error": { "type": "string", "maxLength": 1000 }
+      },
+      "if": { "properties": { "verdict": { "const": "certified" } } },
+      "then": { "properties": { "failureCode": { "const": "" } }, "required": ["stageId"] }
+    }
+  }
+}

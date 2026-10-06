@@ -1,0 +1,752 @@
+{
+  "schema": "urn:anvilkit:codegen-protocol:v1",
+  "cases": [
+    {
+      "name": "run-candidate: first round in the workspace's round tree",
+      "ref": "#/$defs/runCandidate",
+      "valid": true,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace/round/1"
+      }
+    },
+    {
+      "name": "run-candidate: a dot-led workspace segment is a name, not a traversal",
+      "ref": "#/$defs/runCandidate",
+      "valid": true,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 7,
+        "round": 64,
+        "roundDir": "/tmp/.anvilkit-ws/round/64"
+      }
+    },
+    {
+      "name": "run-candidate: no protocolVersion",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace/round/1"
+      }
+    },
+    {
+      "name": "run-candidate: another protocol version",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 2,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace/round/1"
+      }
+    },
+    {
+      "name": "run-candidate: a member the protocol does not name (a program)",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace/round/1",
+        "program": "/bin/sh"
+      }
+    },
+    {
+      "name": "run-candidate: an environment member is not the coordinator's to state",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace/round/1",
+        "env": [
+          "X=1"
+        ]
+      }
+    },
+    {
+      "name": "run-candidate: requestId 0",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 0,
+        "round": 1,
+        "roundDir": "/workspace/round/1"
+      }
+    },
+    {
+      "name": "run-candidate: requestId as a string",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": "1",
+        "round": 1,
+        "roundDir": "/workspace/round/1"
+      }
+    },
+    {
+      "name": "run-candidate: round 0",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 0,
+        "roundDir": "/workspace/round/1"
+      }
+    },
+    {
+      "name": "run-candidate: round 65",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 65,
+        "roundDir": "/workspace/round/1"
+      }
+    },
+    {
+      "name": "run-candidate: relative round directory",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "workspace/round/1"
+      }
+    },
+    {
+      "name": "run-candidate: a .. segment",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace/../etc/round/1"
+      }
+    },
+    {
+      "name": "run-candidate: a . segment",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace/./round/1"
+      }
+    },
+    {
+      "name": "run-candidate: an empty segment",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace//round/1"
+      }
+    },
+    {
+      "name": "run-candidate: a trailing slash",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace/round/1/"
+      }
+    },
+    {
+      "name": "run-candidate: not a round directory",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace/w/1"
+      }
+    },
+    {
+      "name": "run-candidate: a leading zero in the round segment",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace/round/01"
+      }
+    },
+    {
+      "name": "run-candidate: another request type",
+      "ref": "#/$defs/runCandidate",
+      "valid": false,
+      "instance": {
+        "type": "run-shell",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace/round/1"
+      }
+    },
+    {
+      "name": "candidate-ended: the leader exited 0",
+      "ref": "#/$defs/candidateEnded",
+      "valid": true,
+      "instance": {
+        "type": "candidate-ended",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "stop": "exited",
+        "exit": 0,
+        "descendantsStopped": 0,
+        "startedAt": "2026-10-06T10:00:00.123456789Z",
+        "endedAt": "2026-10-06T10:00:04Z"
+      }
+    },
+    {
+      "name": "candidate-ended: stopped at the bound, the leader killed by a signal",
+      "ref": "#/$defs/candidateEnded",
+      "valid": true,
+      "instance": {
+        "type": "candidate-ended",
+        "protocolVersion": 1,
+        "requestId": 2,
+        "round": 2,
+        "stop": "timeout",
+        "exit": null,
+        "signal": "killed",
+        "descendantsStopped": 3,
+        "startedAt": "2026-10-06T10:00:00.123456789Z",
+        "endedAt": "2026-10-06T10:00:04Z"
+      }
+    },
+    {
+      "name": "candidate-ended: a nonzero exit after cancellation",
+      "ref": "#/$defs/candidateEnded",
+      "valid": true,
+      "instance": {
+        "type": "candidate-ended",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "stop": "canceled",
+        "exit": 1,
+        "descendantsStopped": 2,
+        "startedAt": "2026-10-06T10:00:00.123456789Z",
+        "endedAt": "2026-10-06T10:00:04Z"
+      }
+    },
+    {
+      "name": "candidate-ended: a null exit needs the signal",
+      "ref": "#/$defs/candidateEnded",
+      "valid": false,
+      "instance": {
+        "type": "candidate-ended",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "stop": "exited",
+        "exit": null,
+        "descendantsStopped": 0,
+        "startedAt": "2026-10-06T10:00:00.123456789Z",
+        "endedAt": "2026-10-06T10:00:04Z"
+      }
+    },
+    {
+      "name": "candidate-ended: an exit status and a signal together",
+      "ref": "#/$defs/candidateEnded",
+      "valid": false,
+      "instance": {
+        "type": "candidate-ended",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "stop": "exited",
+        "exit": 0,
+        "descendantsStopped": 0,
+        "startedAt": "2026-10-06T10:00:00.123456789Z",
+        "endedAt": "2026-10-06T10:00:04Z",
+        "signal": "killed"
+      }
+    },
+    {
+      "name": "candidate-ended: unknown stop reason",
+      "ref": "#/$defs/candidateEnded",
+      "valid": false,
+      "instance": {
+        "type": "candidate-ended",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "stop": "crashed",
+        "exit": 0,
+        "descendantsStopped": 0,
+        "startedAt": "2026-10-06T10:00:00.123456789Z",
+        "endedAt": "2026-10-06T10:00:04Z"
+      }
+    },
+    {
+      "name": "candidate-ended: exit out of range",
+      "ref": "#/$defs/candidateEnded",
+      "valid": false,
+      "instance": {
+        "type": "candidate-ended",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "stop": "exited",
+        "exit": 256,
+        "descendantsStopped": 0,
+        "startedAt": "2026-10-06T10:00:00.123456789Z",
+        "endedAt": "2026-10-06T10:00:04Z"
+      }
+    },
+    {
+      "name": "candidate-ended: negative descendant count",
+      "ref": "#/$defs/candidateEnded",
+      "valid": false,
+      "instance": {
+        "type": "candidate-ended",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "stop": "exited",
+        "exit": 0,
+        "descendantsStopped": -1,
+        "startedAt": "2026-10-06T10:00:00.123456789Z",
+        "endedAt": "2026-10-06T10:00:04Z"
+      }
+    },
+    {
+      "name": "candidate-ended: a local timestamp",
+      "ref": "#/$defs/candidateEnded",
+      "valid": false,
+      "instance": {
+        "type": "candidate-ended",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "stop": "exited",
+        "exit": 0,
+        "descendantsStopped": 0,
+        "startedAt": "2026-10-06T10:00:00.123456789Z",
+        "endedAt": "2026-10-06T10:00:04+02:00"
+      }
+    },
+    {
+      "name": "candidate-ended: no endedAt",
+      "ref": "#/$defs/candidateEnded",
+      "valid": false,
+      "instance": {
+        "type": "candidate-ended",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "stop": "exited",
+        "exit": 0,
+        "descendantsStopped": 0,
+        "startedAt": "2026-10-06T10:00:00.123456789Z"
+      }
+    },
+    {
+      "name": "candidate-ended: an unknown member",
+      "ref": "#/$defs/candidateEnded",
+      "valid": false,
+      "instance": {
+        "type": "candidate-ended",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "stop": "exited",
+        "exit": 0,
+        "descendantsStopped": 0,
+        "startedAt": "2026-10-06T10:00:00.123456789Z",
+        "endedAt": "2026-10-06T10:00:04Z",
+        "verdict": "certified"
+      }
+    },
+    {
+      "name": "refused: final, the stop was not established",
+      "ref": "#/$defs/refused",
+      "valid": true,
+      "instance": {
+        "type": "refused",
+        "protocolVersion": 1,
+        "requestId": 3,
+        "round": 3,
+        "code": "STOP_NOT_ESTABLISHED",
+        "reason": "1 candidate process(es) still alive after the stop"
+      }
+    },
+    {
+      "name": "refused: the round is not new",
+      "ref": "#/$defs/refused",
+      "valid": true,
+      "instance": {
+        "type": "refused",
+        "protocolVersion": 1,
+        "requestId": 3,
+        "round": 3,
+        "code": "ROUND_NOT_NEW",
+        "reason": "round 3 is not greater than round 3"
+      }
+    },
+    {
+      "name": "refused: unknown code",
+      "ref": "#/$defs/refused",
+      "valid": false,
+      "instance": {
+        "type": "refused",
+        "protocolVersion": 1,
+        "requestId": 3,
+        "round": 3,
+        "code": "NOPE",
+        "reason": "1 candidate process(es) still alive after the stop"
+      }
+    },
+    {
+      "name": "refused: empty reason",
+      "ref": "#/$defs/refused",
+      "valid": false,
+      "instance": {
+        "type": "refused",
+        "protocolVersion": 1,
+        "requestId": 3,
+        "round": 3,
+        "code": "STOP_NOT_ESTABLISHED",
+        "reason": ""
+      }
+    },
+    {
+      "name": "refused: reason over 300 characters",
+      "ref": "#/$defs/refused",
+      "valid": false,
+      "instance": {
+        "type": "refused",
+        "protocolVersion": 1,
+        "requestId": 3,
+        "round": 3,
+        "code": "STOP_NOT_ESTABLISHED",
+        "reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "name": "answer: a candidate-ended answer",
+      "ref": "#/$defs/answer",
+      "valid": true,
+      "instance": {
+        "type": "candidate-ended",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "stop": "exited",
+        "exit": 0,
+        "descendantsStopped": 0,
+        "startedAt": "2026-10-06T10:00:00.123456789Z",
+        "endedAt": "2026-10-06T10:00:04Z"
+      }
+    },
+    {
+      "name": "answer: a refusal",
+      "ref": "#/$defs/answer",
+      "valid": true,
+      "instance": {
+        "type": "refused",
+        "protocolVersion": 1,
+        "requestId": 3,
+        "round": 3,
+        "code": "STOP_NOT_ESTABLISHED",
+        "reason": "1 candidate process(es) still alive after the stop"
+      }
+    },
+    {
+      "name": "answer: a request is no answer",
+      "ref": "#/$defs/answer",
+      "valid": false,
+      "instance": {
+        "type": "run-candidate",
+        "protocolVersion": 1,
+        "requestId": 1,
+        "round": 1,
+        "roundDir": "/workspace/round/1"
+      }
+    },
+    {
+      "name": "team result: certified with its accepted stage",
+      "ref": "#/$defs/teamResult",
+      "valid": true,
+      "instance": {
+        "protocolVersion": 1,
+        "outcome": {
+          "kind": "certified",
+          "detail": "round 1 certified by the independent validator",
+          "round": 1
+        },
+        "verdict": "certified",
+        "failureCode": "",
+        "stageId": "stg_01HZY",
+        "existing": false,
+        "counters": {
+          "rounds": 1,
+          "reviewRounds": 1,
+          "repairs": 0
+        },
+        "calls": 12
+      }
+    },
+    {
+      "name": "team result: a Control denial is reported as such, never as a candidate defect",
+      "ref": "#/$defs/teamResult",
+      "valid": true,
+      "instance": {
+        "protocolVersion": 1,
+        "outcome": {
+          "kind": "model_denied",
+          "failureCode": "BUDGET_EXHAUSTED",
+          "detail": "coder: Control denied the call",
+          "round": 1
+        },
+        "verdict": "infrastructure_failed",
+        "failureCode": "OBSERVER_FAILED",
+        "stageId": "stg_01HZZ",
+        "counters": {
+          "rounds": 1,
+          "reviewRounds": 0,
+          "repairs": 0
+        },
+        "calls": 2
+      }
+    },
+    {
+      "name": "team result: no stage when nothing could be sealed",
+      "ref": "#/$defs/teamResult",
+      "valid": true,
+      "instance": {
+        "protocolVersion": 1,
+        "outcome": {
+          "kind": "infrastructure_failed",
+          "failureCode": "STOP_NOT_ESTABLISHED",
+          "detail": "the supervisor could not confirm the candidate stop"
+        },
+        "verdict": "infrastructure_failed",
+        "failureCode": "OBSERVER_FAILED",
+        "error": "the supervisor refused the candidate round"
+      }
+    },
+    {
+      "name": "team result: certified without a stage",
+      "ref": "#/$defs/teamResult",
+      "valid": false,
+      "instance": {
+        "protocolVersion": 1,
+        "outcome": {
+          "kind": "certified",
+          "detail": "round 1 certified by the independent validator",
+          "round": 1
+        },
+        "verdict": "certified",
+        "failureCode": "",
+        "existing": false,
+        "counters": {
+          "rounds": 1,
+          "reviewRounds": 1,
+          "repairs": 0
+        },
+        "calls": 12
+      }
+    },
+    {
+      "name": "team result: certified with a failure code",
+      "ref": "#/$defs/teamResult",
+      "valid": false,
+      "instance": {
+        "protocolVersion": 1,
+        "outcome": {
+          "kind": "certified",
+          "detail": "round 1 certified by the independent validator",
+          "round": 1
+        },
+        "verdict": "certified",
+        "failureCode": "OBSERVER_FAILED",
+        "stageId": "stg_01HZY",
+        "existing": false,
+        "counters": {
+          "rounds": 1,
+          "reviewRounds": 1,
+          "repairs": 0
+        },
+        "calls": 12
+      }
+    },
+    {
+      "name": "team result: unknown outcome kind",
+      "ref": "#/$defs/teamResult",
+      "valid": false,
+      "instance": {
+        "protocolVersion": 1,
+        "outcome": {
+          "kind": "succeeded",
+          "detail": ""
+        },
+        "verdict": "certified",
+        "failureCode": "",
+        "stageId": "stg_01HZY",
+        "existing": false,
+        "counters": {
+          "rounds": 1,
+          "reviewRounds": 1,
+          "repairs": 0
+        },
+        "calls": 12
+      }
+    },
+    {
+      "name": "team result: unknown verdict",
+      "ref": "#/$defs/teamResult",
+      "valid": false,
+      "instance": {
+        "protocolVersion": 1,
+        "outcome": {
+          "kind": "model_denied",
+          "failureCode": "BUDGET_EXHAUSTED",
+          "detail": "coder: Control denied the call",
+          "round": 1
+        },
+        "verdict": "failed",
+        "failureCode": "OBSERVER_FAILED",
+        "stageId": "stg_01HZZ",
+        "counters": {
+          "rounds": 1,
+          "reviewRounds": 0,
+          "repairs": 0
+        },
+        "calls": 2
+      }
+    },
+    {
+      "name": "team result: lower-case failure code",
+      "ref": "#/$defs/teamResult",
+      "valid": false,
+      "instance": {
+        "protocolVersion": 1,
+        "outcome": {
+          "kind": "model_denied",
+          "failureCode": "BUDGET_EXHAUSTED",
+          "detail": "coder: Control denied the call",
+          "round": 1
+        },
+        "verdict": "infrastructure_failed",
+        "failureCode": "observer_failed",
+        "stageId": "stg_01HZZ",
+        "counters": {
+          "rounds": 1,
+          "reviewRounds": 0,
+          "repairs": 0
+        },
+        "calls": 2
+      }
+    },
+    {
+      "name": "team result: budget and outputs are not part of the result document",
+      "ref": "#/$defs/teamResult",
+      "valid": false,
+      "instance": {
+        "protocolVersion": 1,
+        "outcome": {
+          "kind": "certified",
+          "detail": "round 1 certified by the independent validator",
+          "round": 1
+        },
+        "verdict": "certified",
+        "failureCode": "",
+        "stageId": "stg_01HZY",
+        "existing": false,
+        "counters": {
+          "rounds": 1,
+          "reviewRounds": 1,
+          "repairs": 0
+        },
+        "calls": 12,
+        "budget": {}
+      }
+    },
+    {
+      "name": "team result: no protocolVersion",
+      "ref": "#/$defs/teamResult",
+      "valid": false,
+      "instance": {
+        "outcome": {
+          "kind": "certified",
+          "detail": "round 1 certified by the independent validator",
+          "round": 1
+        },
+        "verdict": "certified",
+        "failureCode": "",
+        "stageId": "stg_01HZY",
+        "existing": false,
+        "counters": {
+          "rounds": 1,
+          "reviewRounds": 1,
+          "repairs": 0
+        },
+        "calls": 12
+      }
+    },
+    {
+      "name": "team result: rounds beyond the bound",
+      "ref": "#/$defs/teamResult",
+      "valid": false,
+      "instance": {
+        "protocolVersion": 1,
+        "outcome": {
+          "kind": "certified",
+          "detail": "round 1 certified by the independent validator",
+          "round": 1
+        },
+        "verdict": "certified",
+        "failureCode": "",
+        "stageId": "stg_01HZY",
+        "existing": false,
+        "counters": {
+          "rounds": 65,
+          "reviewRounds": 1,
+          "repairs": 0
+        },
+        "calls": 12
+      }
+    }
+  ]
+}
