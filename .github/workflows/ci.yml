@@ -1,0 +1,48 @@
+# Independent verification of anvilkit-job-codegen-supervisor from this
+# repository alone: formatting, build, vet, the tests (the privilege-drop and
+# harness tests run real processes as UID 10001 and need root: they run under
+# sudo and ANVILKIT_REQUIRE_ROOT_TESTS turns a skip into a failure), the race
+# check of the protocol and process packages, the protocol copy against its
+# source in the contracts repository, and the fixed-task image from the
+# repository root. GOWORK=off: the module links no other repository.
+name: ci
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+env:
+  GOWORK: "off"
+  GOFLAGS: "-mod=readonly"
+  # anvilkit-agent-contracts commit holding jobs/codegen/protocol.schema.json:
+  # set to the published commit before this workflow can pass (see README.md).
+  CONTRACTS_REF: PENDING-CONTRACTS-COMMIT
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.0"
+      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -race -count=1 ./internal/protocol/... ./internal/process/... ./internal/launch/... ./internal/config/...
+      - name: tests as root (real UID 10001 candidates, capability sets, stop and confirmation)
+        run: sudo --preserve-env=GOWORK,GOFLAGS,HOME env "PATH=$PATH" ANVILKIT_REQUIRE_ROOT_TESTS=1 GOCACHE="$(go env GOCACHE)" GOMODCACHE="$(go env GOMODCACHE)" go test -count=1 ./...
+  protocol:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ancyloce/anvilkit-agent-contracts
+          ref: ${{ env.CONTRACTS_REF }}
+          path: contracts
+      - run: sh tools/sync-protocol.sh --check contracts
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t anvilkit-codegen:ci .
