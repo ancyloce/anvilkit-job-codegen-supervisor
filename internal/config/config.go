@@ -88,6 +88,13 @@ type Team struct {
 	Timeout time.Duration `koanf:"timeout"`
 	// Observer is the observer identity the coordinator submits under.
 	Observer string `koanf:"observer"`
+	// HarnessUID and HarnessGID are the second step identity of the
+	// independent validator the coordinator runs in the team container (its
+	// SSR harness, UID/GID 10003, used for nothing else in the Pod). Every
+	// candidate stop and confirmation covers it as well as the candidate's:
+	// a validator ended mid-run can leave a harness process behind.
+	HarnessUID uint32 `koanf:"harness_uid"`
+	HarnessGID uint32 `koanf:"harness_gid"`
 }
 
 // Launch is the per-Job identity, environment-only.
@@ -131,6 +138,8 @@ var defaults = map[string]any{
 	"team.contracts_dir":         "/anvilkit/contracts",
 	"team.timeout":               "24h",
 	"team.observer":              "anvilkit-codegen-team",
+	"team.harness_uid":           10003,
+	"team.harness_gid":           10003,
 }
 
 // launchEnv maps the launch facts the Job template injects.
@@ -218,6 +227,9 @@ func (c Config) Validate() error {
 			}
 		}
 		within("team.timeout", c.Team.Timeout, time.Second, 24*time.Hour)
+		if c.Team.HarnessUID == 0 || c.Team.HarnessGID == 0 || c.Team.HarnessUID == c.Candidate.UID || c.Team.HarnessUID == c.Sidecar.UID {
+			errs = append(errs, errors.New("team.harness_uid and team.harness_gid must be neither root, the candidate nor the sidecar"))
+		}
 	}
 	if c.Launch.LaunchID == "" || c.Launch.AttemptID == "" || c.Launch.Envelope == "" {
 		errs = append(errs, fmt.Errorf("%s, %s and %s are required", EnvLaunchID, EnvAttemptID, EnvLaunchEnvelope))

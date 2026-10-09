@@ -29,6 +29,7 @@ func TestReviewedConfigurationLoads(t *testing.T) {
 	require.Equal(t, "lch_1", c.Launch.LaunchID)
 	require.False(t, c.Team.Enabled, "the mode is the profile's entrypoint argument, never the file's default")
 	require.Equal(t, []string{"/usr/local/bin/node", "/anvilkit/team/dist/coordinator.js"}, c.Team.Coordinator)
+	require.Equal(t, [2]uint32{10003, 10003}, [2]uint32{c.Team.HarnessUID, c.Team.HarnessGID}, "the validator's SSR harness identity")
 	c.Team.Enabled = true
 	require.NoError(t, c.Validate())
 }
@@ -59,4 +60,15 @@ func TestBoundsAndIdentities(t *testing.T) {
 	require.NoError(t, err, "the team section is checked only once the team mode is selected")
 	c.Team.Enabled = true
 	require.ErrorContains(t, c.Validate(), "team.coordinator")
+	for name, text := range map[string]string{
+		"root harness":             "team:\n  harness_uid: 0\n",
+		"harness is the candidate": "team:\n  harness_uid: 10001\n",
+		"harness is the sidecar":   "team:\n  harness_uid: 10002\n",
+		"root harness group":       "team:\n  harness_gid: 0\n",
+	} {
+		c, err := LoadFrom(write(t, text), launchFacts)
+		require.NoError(t, err, name)
+		c.Team.Enabled = true
+		require.ErrorContains(t, c.Validate(), "team.harness_uid", name)
+	}
 }
