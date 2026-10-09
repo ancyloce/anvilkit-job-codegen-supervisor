@@ -91,6 +91,11 @@ func (s *Supervisor) run(ctx context.Context, summary *Summary) error {
 		return err
 	}
 	s.proc = &process.Controller{Self: s.Self, UID: cfg.Candidate.UID, GID: cfg.Candidate.GID, Dir: cfg.Paths.Workspace, Now: s.Now}
+	if cfg.Team.Enabled {
+		// The validator the coordinator runs has a second step identity (its
+		// SSR harness): every stop covers it too.
+		s.proc.Others = []process.Identity{{UID: cfg.Team.HarnessUID, GID: cfg.Team.HarnessGID}}
+	}
 	env, err := launch.Parse([]byte(cfg.Launch.Envelope))
 	if err != nil {
 		return err

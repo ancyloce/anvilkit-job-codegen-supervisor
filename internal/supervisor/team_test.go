@@ -206,3 +206,76 @@ func TestTeamProtocolViolationEndsTheLaunch(t *testing.T) {
 		})
 	}
 }
+
+// VAL-05: the coordinator runs the validator's steps as UID 10001 among its
+// own children, and in the team container it is not PID 1. A step process
+// that detached (a new session, its parent gone) is reparented to the
+// supervisor — the child subreaper — outside the coordinator's subtree.
+// When the coordinator has ended, every descendant, such an orphan
+// included, is stopped as the candidate identity and confirmed gone before
+// the team result is read; the launch then fails on that result alone.
+func TestCoordinatorLeftoversAreGoneBeforeTheResultIsRead(t *testing.T) {
+	l := prepare(t)
+	teamLayout(t, l, "60s", "60s")
+	left := filepath.Join(l.verdict, "team", "left")
+	coordinatorScript(t, l, detachedAs("10001", left+".10001")+detachedAs("10003", left+".10003")+"exit 0\n")
+	deadline := time.Now().Add(10 * time.Minute)
+	fs := &fakeSidecar{scope: scopeFor(deadline), inputs: map[string][]byte{}, stageID: "stg_left"}
+	fs.serve(t, l.sockets)
+	code, summary, log := supervise(t, l, envelopeFor(deadline))
+	require.Equal(t, 1, code, log)
+	require.Contains(t, summary.Error, "coordinator exited 0 without a result", log)
+	require.Empty(t, fs.manifests)
+	requireGone(t, []int{pidOf(t, left+".10001")})
+	requireGoneAs(t, "10003", []int{pidOf(t, left+".10003")})
+}
+
+// A validator ended mid-run (its CLI killed) can leave a process of its SSR
+// harness identity (UID 10003) behind, reparented to the supervisor. The
+// next candidate round's stop runs as that identity too: the round is
+// answered as ended — not refused as an unestablished stop — and the
+// harness process is gone when the answer arrives.
+func TestTeamRoundStopCoversTheHarnessIdentity(t *testing.T) {
+	l := prepare(t)
+	teamLayout(t, l, "60s", "60s")
+	require.NoError(t, os.WriteFile(filepath.Join(l.root, "coder.sh"), []byte("#!/bin/sh\nmkdir -p \"$ANVILKIT_WORKSPACE/w\"\nexit 0\n"), 0o755))
+	left := filepath.Join(l.verdict, "team", "left.10003")
+	coordinatorScript(t, l, detachedAs("10003", left)+"mkdir -p \"$ANVILKIT_WORKSPACE/round/1\"\n"+request(1, 1, "$ANVILKIT_WORKSPACE/round/1")+
+		"read answer\nprintf '%s\\n' \"$answer\" >> \"$ANVILKIT_VERDICT_DIR/team/answers\"\n"+
+		"p=$(cat \""+left+"\")\nif [ -e /proc/$p ] && ! grep -q '^State:.*Z' /proc/$p/status; then echo 1; else echo 0; fi > \"$ANVILKIT_VERDICT_DIR/team/alive\"\nexit 0\n")
+	deadline := time.Now().Add(10 * time.Minute)
+	fs := &fakeSidecar{scope: scopeFor(deadline), inputs: map[string][]byte{}, stageID: "stg_h"}
+	fs.serve(t, l.sockets)
+	code, _, log := supervise(t, l, envelopeFor(deadline))
+	require.Equal(t, 1, code, log)
+	answers := readAnswers(t, l)
+	require.Len(t, answers, 1)
+	require.Equal(t, "candidate-ended", answers[0]["type"], "the round's stop was established: %v", answers[0])
+	alive, err := os.ReadFile(filepath.Join(l.verdict, "team", "alive"))
+	require.NoError(t, err)
+	require.Equal(t, "0", strings.TrimSpace(string(alive)), "the harness process was gone when the answer arrived")
+	requireGoneAs(t, "10003", []int{pidOf(t, left)})
+}
+
+// detachedAs is a coordinator script fragment: a process of the identity
+// uid in a new session whose parent is gone (reparented to the supervisor),
+// its pid recorded at file.
+func detachedAs(uid, file string) string {
+	return "pid=$(setpriv --reuid=" + uid + " --regid=" + uid + " --clear-groups -- /bin/sh -c 'setsid sleep 300 </dev/null >/dev/null 2>&1 & echo $!')\n" +
+		"[ -n \"$pid\" ] && [ -e /proc/$pid ] || exit 3\n" +
+		"grep -q '^Uid:[[:space:]]*" + uid + "' /proc/$pid/status || exit 4\n" +
+		"echo $pid > \"" + file + "\"\n"
+}
+
+// requireGoneAs asserts that none of the PIDs is a live process of uid.
+func requireGoneAs(t *testing.T, uid string, pids []int) {
+	t.Helper()
+	for _, pid := range pids {
+		raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "status"))
+		if err != nil {
+			continue
+		}
+		status := string(raw)
+		require.False(t, strings.Contains(status, "\nUid:\t"+uid) && !strings.Contains(status, "State:\tZ"), "pid %d still runs as %s:\n%s", pid, uid, status)
+	}
+}
