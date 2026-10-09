@@ -47,3 +47,11 @@ func TestTrampolineArguments(t *testing.T) {
 	require.Equal(t, 2, Stop([]string{"--root"}))
 	require.Equal(t, 2, Stop([]string{"--pgid", "5"}), "--root is required")
 }
+
+// A stop helper waits only for its own identity's processes and those still
+// of UID 0 (a trampoline that has not dropped yet): another identity's are
+// the helper running as that identity's to stop.
+func TestSignalableKeepsOwnAndPendingRoot(t *testing.T) {
+	got := signalable([]proc{{pid: 1, uid: 10001}, {pid: 2, uid: 10003}, {pid: 3, uid: 0}, {pid: 4, uid: 10001}}, 10001)
+	require.Equal(t, []int{1, 3, 4}, pids(got))
+}

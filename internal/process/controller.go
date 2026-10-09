@@ -63,6 +63,11 @@ type Ended struct {
 	Started, Ended time.Time
 }
 
+// Identity is a non-root UID and GID a candidate's processes run as.
+type Identity struct {
+	UID, GID uint32
+}
+
 // Controller performs the process operations of one launch for the
 // candidate identity.
 type Controller struct {
@@ -71,7 +76,13 @@ type Controller struct {
 	// UID and GID are the candidate identity; Dir its working directory.
 	UID, GID uint32
 	Dir      string
-	Now      func() time.Time
+	// Others are further identities processes of the launch run as without
+	// being the candidate program (in the team mode the validator's SSR
+	// harness): every stop runs the helper as each of them too, since only
+	// an identity can signal its own processes, and every confirmation
+	// counts them.
+	Others []Identity
+	Now    func() time.Time
 	// trusted is the pid of a trusted child of the supervisor (the team
 	// coordinator) while it runs: its subtree is not the candidate's and is
 	// left out of every candidate stop and confirmation.
@@ -207,9 +218,48 @@ func (c *Controller) StopAll() (int, error) {
 }
 
 // stopCandidate runs the stop helper as the candidate identity through the
-// trampoline (pgid 0: no group, descendants only) and waits for it under a
-// bound. It returns how many processes the helper signaled.
+// trampoline (pgid 0: no group, descendants only), then as each of the
+// other identities (descendants only), each under a bound. It returns how
+// many processes the helpers signaled.
 func (c *Controller) stopCandidate(pgid int) (int, error) {
+	killed, err := c.stopAs(Identity{UID: c.UID, GID: c.GID}, pgid)
+	if err != nil {
+		return killed, err
+	}
+	for _, other := range c.Others {
+		// After the candidate's helper (which waits for every process still
+		// of UID 0 to drop or die), only an identity with a live process left
+		// needs its own helper; the confirmation counts every identity.
+		if !c.hasDescendantsOf(other.UID) {
+			continue
+		}
+		n, err := c.stopAs(other, 0)
+		killed += n
+		if err != nil {
+			return killed, fmt.Errorf("as UID %d: %w", other.UID, err)
+		}
+	}
+	return killed, nil
+}
+
+// hasDescendantsOf reports whether a live descendant outside the trusted
+// subtree runs as uid (true when /proc cannot be read: the helper then runs).
+func (c *Controller) hasDescendantsOf(uid uint32) bool {
+	procs, err := scan()
+	if err != nil {
+		return true
+	}
+	for _, p := range descendants(procs, os.Getpid(), c.trusted) {
+		if p.uid == uid {
+			return true
+		}
+	}
+	return false
+}
+
+// stopAs runs the stop helper as one identity and waits for it under a
+// bound.
+func (c *Controller) stopAs(id Identity, pgid int) (int, error) {
 	args := []string{StopCommand, "--root", strconv.Itoa(os.Getpid())}
 	if pgid > 0 {
 		args = append(args, "--pgid", strconv.Itoa(pgid))
@@ -217,7 +267,7 @@ func (c *Controller) stopCandidate(pgid int) (int, error) {
 	if c.trusted > 0 {
 		args = append(args, "--exclude", strconv.Itoa(c.trusted))
 	}
-	cmd := exec.Command(c.Self, trampolineArgs(c.UID, c.GID, c.Dir, c.Self, args...)...)
+	cmd := exec.Command(c.Self, trampolineArgs(id.UID, id.GID, c.Dir, c.Self, args...)...)
 	cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin"}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

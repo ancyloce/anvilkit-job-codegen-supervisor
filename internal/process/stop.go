@@ -43,12 +43,14 @@ type stopReport struct {
 	Rounds int `json:"rounds"`
 }
 
-// Stop is the candidate-stop subcommand: running as the candidate
-// identity, it kills the process group and then every descendant of the
-// supervisor (--root) it can signal, round after round, until no live
-// descendant other than itself (and the --exclude subtree) is left. It
-// exits 0 with a report on stdout, 3 when a descendant refuses the
-// signal, 4 when descendants are still alive after the bounded rounds.
+// Stop is the candidate-stop subcommand: running as one identity of the
+// launch (the candidate's, or another one the supervisor stops), it kills
+// the process group and then every descendant of the supervisor (--root)
+// of that identity, round after round, until no live descendant of it —
+// nor one still of UID 0, about to drop — other than itself (and the
+// --exclude subtree) is left. It exits 0 with a report on stdout, 3 when
+// a descendant refuses the signal, 4 when descendants are still alive
+// after the bounded rounds.
 func Stop(args []string) int {
 	var root, pgid, exclude int
 	var err error
@@ -89,7 +91,12 @@ func Stop(args []string) int {
 			fmt.Fprintln(os.Stderr, "candidate-stop: /proc:", err)
 			return 2
 		}
-		live := descendants(procs, root, self, exclude)
+		// Its own identity's processes, and root ones still on their way to
+		// an identity (a trampoline that has not dropped yet); another
+		// non-root identity's processes are the helper running as that
+		// identity's to stop (the supervisor runs one per identity and
+		// confirms them all).
+		live := signalable(descendants(procs, root, self, exclude), own)
 		if len(live) == 0 {
 			report.Rounds = round
 			_ = json.NewEncoder(os.Stdout).Encode(report)
@@ -113,6 +120,18 @@ func Stop(args []string) int {
 	}
 	fmt.Fprintln(os.Stderr, "candidate-stop: descendants still alive after the bounded rounds")
 	return 4
+}
+
+// signalable keeps the processes a helper of identity own waits for: its
+// own identity's and those still of UID 0.
+func signalable(procs []proc, own uint32) []proc {
+	out := procs[:0:0]
+	for _, p := range procs {
+		if p.uid == own || p.uid == 0 {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // BecomeSubreaper makes orphaned descendants of this process reparent to
