@@ -32,6 +32,44 @@ func TestEnvelopeIsStrict(t *testing.T) {
 	}
 }
 
+// The optional component (P0.8): its source revision always, the
+// allocated identity all three members or none, each of its form; an
+// envelope without it stays valid.
+func TestEnvelopeComponentIsStrict(t *testing.T) {
+	const component = `"component":{"componentId":"cmp_hero_fixed","puckType":"Hero","packageName":"@anvilkit/hero-fixed","sourceRevision":"1"},`
+	with := strings.Replace(okEnvelope, `"inputs":`, component+`"inputs":`, 1)
+	e, err := Parse([]byte(with))
+	require.NoError(t, err)
+	id, typ, pkg := "cmp_hero_fixed", "Hero", "@anvilkit/hero-fixed"
+	require.Equal(t, &Component{ComponentID: &id, PuckType: &typ, PackageName: &pkg, SourceRevision: "1"}, e.Component)
+	e, err = Parse([]byte(okEnvelope))
+	require.NoError(t, err)
+	require.Nil(t, e.Component)
+	// A preview or release launch names the revision alone.
+	e, err = Parse([]byte(strings.Replace(okEnvelope, `"inputs":`, `"component":{"sourceRevision":"4"},"inputs":`, 1)))
+	require.NoError(t, err)
+	require.Equal(t, &Component{SourceRevision: "4"}, e.Component)
+	for name, doc := range map[string]string{
+		"null":               strings.Replace(okEnvelope, `"inputs":`, `"component":null,"inputs":`, 1),
+		"not an object":      strings.Replace(okEnvelope, `"inputs":`, `"component":"cmp_hero_fixed","inputs":`, 1),
+		"empty object":       strings.Replace(okEnvelope, `"inputs":`, `"component":{},"inputs":`, 1),
+		"unknown member":     strings.Replace(with, `"sourceRevision":"1"}`, `"sourceRevision":"1","version":"1.0.0"}`, 1),
+		"missing revision":   strings.Replace(with, `,"sourceRevision":"1"}`, `}`, 1),
+		"missing package":    strings.Replace(with, `"packageName":"@anvilkit/hero-fixed",`, ``, 1),
+		"component id alone": strings.Replace(with, `"puckType":"Hero","packageName":"@anvilkit/hero-fixed",`, ``, 1),
+		"empty component id": strings.Replace(with, `"componentId":"cmp_hero_fixed"`, `"componentId":""`, 1),
+		"empty package":      strings.Replace(with, `"@anvilkit/hero-fixed"`, `""`, 1),
+		"long package":       strings.Replace(with, `"@anvilkit/hero-fixed"`, `"`+strings.Repeat("a", 215)+`"`, 1),
+		"lowercase type":     strings.Replace(with, `"puckType":"Hero"`, `"puckType":"hero"`, 1),
+		"bad component id":   strings.Replace(with, `"cmp_hero_fixed"`, `"-cmp"`, 1),
+		"revision not a seq": strings.Replace(with, `"sourceRevision":"1"`, `"sourceRevision":"01"`, 1),
+		"numeric revision":   strings.Replace(with, `"sourceRevision":"1"`, `"sourceRevision":1`, 1),
+	} {
+		_, err := Parse([]byte(doc))
+		require.Error(t, err, name)
+	}
+}
+
 type fakeLoader struct {
 	reported, served []byte
 	fail             error
