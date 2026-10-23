@@ -16,7 +16,7 @@ env:
   GOFLAGS: "-mod=readonly"
   # anvilkit-agent-contracts commit holding jobs/codegen/protocol.schema.json:
   # the published commit of tag go/v0.1.10 (see README.md).
-  CONTRACTS_REF: 0f7afcafc88bc7247b31322d3abe839c156b53f4
+  CONTRACTS_REF: 6ee298d8c9d2afe7a8e0f46a321db31d4c58f860
 permissions:
   contents: read
 jobs:
