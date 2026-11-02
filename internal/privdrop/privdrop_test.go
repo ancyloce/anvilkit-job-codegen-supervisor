@@ -26,7 +26,8 @@ type reportOut struct {
 // TestMain doubles as the helper processes: "report" prints the kernel's
 // view of the process (it is what the trampoline executes as the
 // candidate), "trampoline" restricts itself to the supervisor set and
-// performs the drop, "trampoline-noroot" attempts the drop without root.
+// performs the drop, "trampoline-noroot" attempts the drop without root,
+// "trampoline-ls" performs the drop into /bin/sh listing its descriptors.
 func TestMain(m *testing.M) {
 	switch os.Getenv("PRIVDROP_HELPER") {
 	case "report":

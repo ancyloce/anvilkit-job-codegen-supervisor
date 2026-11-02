@@ -50,8 +50,9 @@ const (
 	StopCanceled = "canceled"
 )
 
-// Refusal codes. CandidateNotRun and StopNotEstablished are final for the
-// launch: nothing is sealed or submitted after them and no round runs.
+// Refusal codes. RefusedCandidateNotRun and RefusedStopNotEstablished are
+// final for the launch: nothing is sealed or submitted after them and no
+// round runs.
 const (
 	RefusedRoundNotNew        = "ROUND_NOT_NEW"
 	RefusedRoundDirInvalid    = "ROUND_DIR_INVALID"

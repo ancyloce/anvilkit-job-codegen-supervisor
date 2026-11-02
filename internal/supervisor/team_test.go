@@ -211,9 +211,10 @@ func TestTeamProtocolViolationEndsTheLaunch(t *testing.T) {
 // own children, and in the team container it is not PID 1. A step process
 // that detached (a new session, its parent gone) is reparented to the
 // supervisor — the child subreaper — outside the coordinator's subtree.
-// When the coordinator has ended, every descendant, such an orphan
-// included, is stopped as the candidate identity and confirmed gone before
-// the team result is read; the launch then fails on that result alone.
+// When the coordinator has ended, every descendant, such orphans of the
+// candidate identity and of the SSR harness identity (UID 10003) included,
+// is stopped as its own identity and confirmed gone before the team result
+// is read; the launch then fails on that result alone.
 func TestCoordinatorLeftoversAreGoneBeforeTheResultIsRead(t *testing.T) {
 	l := prepare(t)
 	teamLayout(t, l, "60s", "60s")

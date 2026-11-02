@@ -157,13 +157,14 @@ func ExecAsSupervisor(program string, args, env []string) error {
 	return syscall.Exec(program, append([]string{program}, args...), env)
 }
 
-// RestrictToSupervisorSet reduces the calling thread's permitted,
-// effective and inheritable capabilities and its bounding set to the
-// reviewed supervisor set. Capabilities are per thread: this constrains
-// the thread that calls it (locked to its goroutine) and nothing else of
-// a running process, which is why it is used only immediately before an
-// execve on that thread (ExecAsSupervisor, the privdrop tests), never to
-// constrain a running supervisor. It cannot add a capability.
+// RestrictToSupervisorSet reduces the calling thread's permitted and
+// effective capabilities and its bounding set to the reviewed supervisor
+// set and clears its inheritable and ambient sets. Capabilities are per
+// thread: this constrains the thread that calls it (locked to its
+// goroutine) and nothing else of a running process, which is why it is
+// used only immediately before an execve on that thread (ExecAsSupervisor,
+// the privdrop tests), never to constrain a running supervisor. It cannot
+// add a capability.
 func RestrictToSupervisorSet() error {
 	runtime.LockOSThread()
 	// The bounding set first, while CAP_SETPCAP is still effective: a root

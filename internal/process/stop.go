@@ -48,9 +48,9 @@ type stopReport struct {
 // the process group and then every descendant of the supervisor (--root)
 // of that identity, round after round, until no live descendant of it —
 // nor one still of UID 0, about to drop — other than itself (and the
-// --exclude subtree) is left. It exits 0 with a report on stdout, 3 when
-// a descendant refuses the signal, 4 when descendants are still alive
-// after the bounded rounds.
+// --exclude subtree) is left. It exits 0 with a report on stdout, 2 on a
+// bad argument or an unreadable /proc, 3 when a descendant refuses the
+// signal, 4 when descendants are still alive after the bounded rounds.
 func Stop(args []string) int {
 	var root, pgid, exclude int
 	var err error

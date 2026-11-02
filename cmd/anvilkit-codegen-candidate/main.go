@@ -152,8 +152,6 @@ func probeIdentity(rep *report) {
 			if n <= 2 || n == int(d.Fd()) {
 				continue
 			}
-			// Anonymous descriptors are this runtime's own (epoll, eventfd);
-			// anything else could only have been inherited.
 			// Anonymous descriptors are this runtime's own (epoll, eventfd),
 			// as is the cgroup limit file it watches; a descriptor that is
 			// gone by the time it is read back was a transient of this
