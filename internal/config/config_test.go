@@ -9,7 +9,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var launchFacts = []string{EnvLaunchID + "=lch_1", EnvAttemptID + "=att_1", EnvLaunchEnvelope + "={}"}
+const testSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+var launchFacts = []string{EnvLaunchID + "=lch_1", EnvAttemptID + "=att_1", EnvLaunchEnvelope + "={}", EnvLaunchSecret + "=" + testSecret}
+
+// The launch secret (DEC-045) comes from the environment alone, as 64
+// lowercase hex characters; the socket names are abstract and distinct.
+func TestLaunchSecretAndSocketNames(t *testing.T) {
+	c, err := LoadFrom(filepath.Join("..", "..", "config.yaml"), launchFacts)
+	require.NoError(t, err)
+	require.Equal(t, testSecret, c.Launch.Secret)
+	require.Equal(t, "@anvilkit/trusted", c.Sidecar.TrustedSocket)
+	require.Equal(t, "@anvilkit/candidate", c.Sidecar.CandidateSocket)
+	withoutSecret := []string{launchFacts[0], launchFacts[1], launchFacts[2]}
+	_, err = LoadFrom(write(t, ""), withoutSecret)
+	require.ErrorContains(t, err, EnvLaunchSecret)
+	for name, secret := range map[string]string{"short": "abc", "upper": "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF", "not hex": "zz23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"} {
+		_, err = LoadFrom(write(t, ""), append(append([]string{}, withoutSecret...), EnvLaunchSecret+"="+secret))
+		require.ErrorContains(t, err, "64 lowercase hex", name)
+	}
+	_, err = LoadFrom(write(t, "launch:\n  secret: "+testSecret+"\n"), launchFacts)
+	require.ErrorContains(t, err, "only through the environment", "the secret is refused inside the file")
+	for name, text := range map[string]string{
+		"not abstract": "sidecar:\n  trusted_socket: /run/anvilkit/sockets/trusted.sock\n",
+		"same name":    "sidecar:\n  trusted_socket: '@x'\n  candidate_socket: '@x'\n",
+		"bare at":      "sidecar:\n  candidate_socket: '@'\n",
+	} {
+		_, err = LoadFrom(write(t, text), launchFacts)
+		require.Error(t, err, name)
+	}
+}
 
 func write(t *testing.T, text string) string {
 	t.Helper()

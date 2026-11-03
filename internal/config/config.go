@@ -2,9 +2,10 @@
 // koanf (A09): defaults < the reviewed config.yaml baked into the image
 // (root-owned, unreadable by the candidate) < the launch facts the Job
 // template injects through the environment (ANVILKIT_LAUNCH_ID,
-// ANVILKIT_ATTEMPT_ID, ANVILKIT_LAUNCH_ENVELOPE). Every path of the DD-03
-// layout is fixed here; nothing in the candidate workspace is ever read as
-// configuration.
+// ANVILKIT_ATTEMPT_ID, ANVILKIT_LAUNCH_ENVELOPE and the per-launch
+// ANVILKIT_LAUNCH_SECRET of DEC-045). Every path of the DD-03 layout and
+// the sidecar's abstract socket names are fixed here; nothing in the
+// candidate workspace is ever read as configuration.
 package config
 
 import (
@@ -20,6 +21,8 @@ import (
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
+
+	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/peer"
 )
 
 const (
@@ -29,15 +32,18 @@ const (
 	EnvLaunchID       = "ANVILKIT_LAUNCH_ID"
 	EnvAttemptID      = "ANVILKIT_ATTEMPT_ID"
 	EnvLaunchEnvelope = "ANVILKIT_LAUNCH_ENVELOPE"
+	// EnvLaunchSecret is the per-launch secret the launcher issues through
+	// the Job template (a Secret reference, never a literal): the second
+	// peer binding of the sidecar sockets (DEC-045 B2).
+	EnvLaunchSecret = "ANVILKIT_LAUNCH_SECRET"
 )
 
 // Paths is the fixed mount layout: the writable candidate workspace, the
-// trusted verdict tree, the sidecar sockets, the explicit read-only agent
-// directory of trusted resources and the protected fixtures.
+// trusted verdict tree, the explicit read-only agent directory of trusted
+// resources and the protected fixtures.
 type Paths struct {
 	Workspace      string `koanf:"workspace"`
 	Verdict        string `koanf:"verdict"`
-	Sockets        string `koanf:"sockets"`
 	AgentDir       string `koanf:"agent_dir"`
 	Fixtures       string `koanf:"fixtures"`
 	TerminationLog string `koanf:"termination_log"`
@@ -54,10 +60,17 @@ type Candidate struct {
 	ProbeTargets []string `koanf:"probe_targets"`
 }
 
+// Sidecar is the access sidecar as this process reaches it: its UID (the
+// server identity verified on every connection), its two abstract-namespace
+// socket names (DEC-045: a leading '@' is the abstract namespace; no
+// directory, no file mode, no shared volume) and the bounds of the wait and
+// of one request.
 type Sidecar struct {
-	UID            uint32        `koanf:"uid"`
-	Wait           time.Duration `koanf:"wait"`
-	RequestTimeout time.Duration `koanf:"request_timeout"`
+	UID             uint32        `koanf:"uid"`
+	TrustedSocket   string        `koanf:"trusted_socket"`
+	CandidateSocket string        `koanf:"candidate_socket"`
+	Wait            time.Duration `koanf:"wait"`
+	RequestTimeout  time.Duration `koanf:"request_timeout"`
 	// MaxInputBytes bounds one input loaded through the sidecar (P13-04).
 	MaxInputBytes int64 `koanf:"max_input_bytes"`
 }
@@ -97,11 +110,14 @@ type Team struct {
 	HarnessGID uint32 `koanf:"harness_gid"`
 }
 
-// Launch is the per-Job identity, environment-only.
+// Launch is the per-Job identity, environment-only. Secret is the launch
+// secret (64 lowercase hex characters) the peer tokens are derived from;
+// it is never logged and never handed to a child process.
 type Launch struct {
 	LaunchID  string `koanf:"launch_id"`
 	AttemptID string `koanf:"attempt_id"`
 	Envelope  string `koanf:"envelope"`
+	Secret    string `koanf:"secret"`
 }
 
 type Config struct {
@@ -116,7 +132,6 @@ type Config struct {
 var defaults = map[string]any{
 	"paths.workspace":            "/workspace",
 	"paths.verdict":              "/anvilkit/verdict",
-	"paths.sockets":              "/run/anvilkit/sockets",
 	"paths.agent_dir":            "/anvilkit/agent",
 	"paths.fixtures":             "/anvilkit/fixtures",
 	"paths.termination_log":      "/dev/termination-log",
@@ -127,6 +142,8 @@ var defaults = map[string]any{
 	"candidate.max_output_bytes": 8 << 20,
 	"candidate.probe_targets":    []string{"127.0.0.1:9", "[::1]:9", "169.254.169.254:80"},
 	"sidecar.uid":                10002,
+	"sidecar.trusted_socket":     "@anvilkit/trusted",
+	"sidecar.candidate_socket":   "@anvilkit/candidate",
 	"sidecar.wait":               "60s",
 	"sidecar.request_timeout":    "60s",
 	"sidecar.max_input_bytes":    67108864,
@@ -143,7 +160,7 @@ var defaults = map[string]any{
 }
 
 // launchEnv maps the launch facts the Job template injects.
-var launchEnv = map[string]string{EnvLaunchID: "launch.launch_id", EnvAttemptID: "launch.attempt_id", EnvLaunchEnvelope: "launch.envelope"}
+var launchEnv = map[string]string{EnvLaunchID: "launch.launch_id", EnvAttemptID: "launch.attempt_id", EnvLaunchEnvelope: "launch.envelope", EnvLaunchSecret: "launch.secret"}
 
 func Load() (Config, error) {
 	path := os.Getenv(EnvConfigFile)
@@ -195,10 +212,18 @@ func LoadFrom(path string, environ []string) (Config, error) {
 // supervisor's command).
 func (c Config) Validate() error {
 	var errs []error
-	for name, v := range map[string]string{"paths.workspace": c.Paths.Workspace, "paths.verdict": c.Paths.Verdict, "paths.sockets": c.Paths.Sockets, "paths.agent_dir": c.Paths.AgentDir, "paths.fixtures": c.Paths.Fixtures, "paths.termination_log": c.Paths.TerminationLog, "candidate.program": c.Candidate.Program, "observer.identity": c.Observer.Identity} {
+	for name, v := range map[string]string{"paths.workspace": c.Paths.Workspace, "paths.verdict": c.Paths.Verdict, "paths.agent_dir": c.Paths.AgentDir, "paths.fixtures": c.Paths.Fixtures, "paths.termination_log": c.Paths.TerminationLog, "candidate.program": c.Candidate.Program, "observer.identity": c.Observer.Identity} {
 		if v == "" {
 			errs = append(errs, fmt.Errorf("%s is required", name))
 		}
+	}
+	for name, v := range map[string]string{"sidecar.trusted_socket": c.Sidecar.TrustedSocket, "sidecar.candidate_socket": c.Sidecar.CandidateSocket} {
+		if len(v) < 2 || v[0] != '@' {
+			errs = append(errs, fmt.Errorf("%s must be an abstract-namespace socket name (a leading '@' and a name)", name))
+		}
+	}
+	if c.Sidecar.TrustedSocket == c.Sidecar.CandidateSocket {
+		errs = append(errs, errors.New("sidecar.trusted_socket and sidecar.candidate_socket must differ"))
 	}
 	if c.Candidate.UID == 0 || c.Candidate.GID == 0 {
 		errs = append(errs, errors.New("candidate.uid and candidate.gid must not be root"))
@@ -233,6 +258,9 @@ func (c Config) Validate() error {
 	}
 	if c.Launch.LaunchID == "" || c.Launch.AttemptID == "" || c.Launch.Envelope == "" {
 		errs = append(errs, fmt.Errorf("%s, %s and %s are required", EnvLaunchID, EnvAttemptID, EnvLaunchEnvelope))
+	}
+	if _, err := peer.ParseSecret(c.Launch.Secret); err != nil {
+		errs = append(errs, fmt.Errorf("%s: %w", EnvLaunchSecret, err))
 	}
 	return errors.Join(errs...)
 }
