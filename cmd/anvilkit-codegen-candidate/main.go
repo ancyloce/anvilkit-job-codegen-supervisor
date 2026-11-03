@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/peer"
 )
 
 type report struct {
@@ -202,21 +204,40 @@ func probeFiles(rep *report) {
 	}
 }
 
-func httpOver(socket string, method, path string, body string) (int, string, error) {
+// httpAnswer is one answer of the sidecar: the status, its code and whether
+// the sidecar's proof over this request's nonce verified (DEC-045).
+type httpAnswer struct {
+	status int
+	code   string
+	proof  bool
+}
+
+// httpOver sends one request over the named abstract socket with the given
+// peer token and, unless withNonce is false, a fresh nonce (DEC-045), and
+// checks the sidecar's proof on the answer against that nonce.
+func httpOver(socket, method, path, body, token string, withNonce bool) (httpAnswer, error) {
 	tr := &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
 		return net.DialTimeout("unix", socket, 2*time.Second)
 	}, DisableKeepAlives: true}
 	c := &http.Client{Transport: tr, Timeout: 5 * time.Second}
 	req, err := http.NewRequest(method, "http://sidecar"+path, strings.NewReader(body))
 	if err != nil {
-		return 0, "", err
+		return httpAnswer{}, err
 	}
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	req.Header.Set(peer.HeaderToken, token)
+	nonce := ""
+	if withNonce {
+		if nonce, err = peer.Nonce(); err != nil {
+			return httpAnswer{}, err
+		}
+		req.Header.Set(peer.HeaderNonce, nonce)
+	}
 	resp, err := c.Do(req)
 	if err != nil {
-		return 0, "", err
+		return httpAnswer{}, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -224,25 +245,94 @@ func httpOver(socket string, method, path string, body string) (int, string, err
 		Code string `json:"code"`
 	}
 	_ = json.Unmarshal(raw, &f)
-	return resp.StatusCode, f.Code, nil
+	return httpAnswer{status: resp.StatusCode, code: f.Code, proof: withNonce && peer.ProofMatches(token, nonce, resp.Header.Get(peer.HeaderProof))}, nil
+}
+
+// rawExchange writes one raw request on a fresh connection and classifies
+// what came back: CLOSED (end of stream without a byte), SERVED (bytes), or
+// the error.
+func rawExchange(socket string, request []byte) string {
+	conn, err := net.DialTimeout("unix", socket, 2*time.Second)
+	if err != nil {
+		return errString(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write(request); err != nil {
+		return errString(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 256)
+	n, err := conn.Read(buf)
+	switch {
+	case err == io.EOF, n == 0 && err != nil:
+		return "CLOSED"
+	case err != nil:
+		return errString(err)
+	default:
+		return "SERVED"
+	}
 }
 
 func probeSockets(rep *report) {
 	trusted, candidate := os.Getenv("ANVILKIT_TRUSTED_SOCKET"), os.Getenv("ANVILKIT_CANDIDATE_SOCKET")
+	token := os.Getenv(peer.EnvToken)
+	// The trusted name is an abstract socket every process of the Pod can
+	// connect to; the sidecar closes a peer of the wrong UID at accept, so
+	// a request there with the candidate's identity and token is closed
+	// unanswered (DEC-045).
 	if c, err := net.DialTimeout("unix", trusted, 2*time.Second); err == nil {
 		c.Close()
-		rep.Outcomes["connect:trusted.sock"] = "CONNECTED"
+		rep.Outcomes["connect:trusted"] = "CONNECTED"
 	} else {
-		rep.Outcomes["connect:trusted.sock"] = errString(err)
+		rep.Outcomes["connect:trusted"] = errString(err)
+	}
+	nonce, _ := peer.Nonce()
+	rep.Outcomes["trusted:scope"] = rawExchange(trusted, []byte("GET /v1/scope HTTP/1.1\r\nHost: sidecar\r\n"+peer.HeaderToken+": "+token+"\r\n"+peer.HeaderNonce+": "+nonce+"\r\n\r\n"))
+	// The server behind the candidate name must be the sidecar's identity.
+	if c, err := net.DialTimeout("unix", candidate, 2*time.Second); err == nil {
+		if uid, err := serverUID(c); err == nil {
+			rep.Outcomes["server:uid"] = strconv.FormatUint(uint64(uid), 10)
+		} else {
+			rep.Outcomes["server:uid"] = errString(err)
+		}
+		c.Close()
+	} else {
+		rep.Outcomes["server:uid"] = errString(err)
 	}
 	input := os.Getenv("ANVILKIT_PROBE_INPUT")
 	answer := func(key, method, path, body string) {
-		status, code, err := httpOver(candidate, method, path, body)
+		a, err := httpOver(candidate, method, path, body, token, true)
 		if err != nil {
 			rep.Outcomes[key] = errString(err)
 			return
 		}
-		rep.Outcomes[key] = strconv.Itoa(status) + " " + code
+		if !a.proof {
+			// A served answer without the sidecar's proof is not the
+			// sidecar's; the status alone is kept as the observation.
+			rep.Outcomes[key] = strconv.Itoa(a.status) + " PROOF_MISMATCH"
+			return
+		}
+		rep.Outcomes[key] = strconv.Itoa(a.status) + " " + a.code
+	}
+	// The second binding on the candidate's own socket: the wrong token and
+	// a missing nonce are refused before any route (unproven by design);
+	// a proper request's answer carries the proof.
+	if a, err := httpOver(candidate, http.MethodGet, "/v1/inputs/"+input, "", strings.Repeat("0", 64), true); err != nil {
+		rep.Outcomes["candidate:wrong-token"] = errString(err)
+	} else {
+		rep.Outcomes["candidate:wrong-token"] = strconv.Itoa(a.status) + " " + a.code
+	}
+	if a, err := httpOver(candidate, http.MethodGet, "/v1/inputs/"+input, "", token, false); err != nil {
+		rep.Outcomes["candidate:no-nonce"] = errString(err)
+	} else {
+		rep.Outcomes["candidate:no-nonce"] = strconv.Itoa(a.status) + " " + a.code
+	}
+	if a, err := httpOver(candidate, http.MethodGet, "/v1/scope", "", token, true); err != nil {
+		rep.Outcomes["candidate:proof"] = errString(err)
+	} else if a.proof {
+		rep.Outcomes["candidate:proof"] = "ok"
+	} else {
+		rep.Outcomes["candidate:proof"] = "PROOF_MISMATCH"
 	}
 	if input != "" {
 		answer("candidate:inputs-permitted", http.MethodGet, "/v1/inputs/"+input, "")
@@ -263,7 +353,8 @@ func probeSockets(rep *report) {
 	uc := conn.(*net.UnixConn)
 	f, _ := os.Open(os.DevNull)
 	rights := unix.UnixRights(int(f.Fd()))
-	_, _, err = uc.WriteMsgUnix([]byte("GET /v1/inputs/"+input+" HTTP/1.1\r\nHost: sidecar\r\n\r\n"), rights, nil)
+	nonce, _ = peer.Nonce()
+	_, _, err = uc.WriteMsgUnix([]byte("GET /v1/inputs/"+input+" HTTP/1.1\r\nHost: sidecar\r\n"+peer.HeaderToken+": "+token+"\r\n"+peer.HeaderNonce+": "+nonce+"\r\n\r\n"), rights, nil)
 	f.Close()
 	if err != nil {
 		rep.Outcomes["candidate:fd-delegation"] = errString(err)
@@ -282,6 +373,23 @@ func probeSockets(rep *report) {
 	default:
 		rep.Outcomes["candidate:fd-delegation"] = "SERVED"
 	}
+}
+
+// serverUID is the kernel-reported UID of the connection's server.
+func serverUID(conn net.Conn) (uint32, error) {
+	raw, err := conn.(*net.UnixConn).SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	var cred *unix.Ucred
+	var cerr error
+	if err := raw.Control(func(fd uintptr) { cred, cerr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED) }); err != nil {
+		return 0, err
+	}
+	if cerr != nil {
+		return 0, cerr
+	}
+	return cred.Uid, nil
 }
 
 func probeNetwork(rep *report) {
