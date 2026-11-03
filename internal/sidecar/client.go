@@ -1,7 +1,11 @@
 // Package sidecar is the trusted harness's client of the access sidecar's
-// trusted socket (DD-03 §5): every request opens its own connection, sends
-// one request and closes, so no descriptor is ever delegated and a
-// connection never outlives its request.
+// trusted socket (DD-03 §5, DEC-045): an abstract-namespace Unix socket
+// inside the Pod (no file, no directory, no shared volume). Every request
+// opens its own connection, verifies the server's kernel-reported identity
+// (SO_PEERCRED, the sidecar's UID) before sending, sends one request
+// carrying the peer token and a fresh nonce, requires the sidecar's proof
+// over that nonce on the answer, and closes, so no descriptor is ever
+// delegated and a connection never outlives its request.
 package sidecar
 
 import (
@@ -13,10 +17,11 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
-	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
+
+	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/peer"
 )
 
 // Error is a sidecar refusal with its public code.
@@ -30,43 +35,76 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("sidecar answered %d %s %s", e.Status, e.Code, e.Reason)
 }
 
-// Client talks to trusted.sock.
+// ErrSidecarProof marks an answer whose proof is missing or wrong: whoever
+// answered does not hold this launch's secret, and the answer is discarded.
+var ErrSidecarProof = errors.New("sidecar proof missing or wrong: the answer is not the sidecar's")
+
+// ErrServerIdentity marks a connection whose server is not the sidecar's
+// UID; nothing is sent on it.
+var ErrServerIdentity = errors.New("the socket's server is not the sidecar's UID")
+
+// Client talks to the trusted socket. Socket is the abstract name ('@'
+// prefixed; Go's net package binds a leading '@' to the abstract
+// namespace), Token the trusted peer token, SidecarUID the server identity
+// every connection must carry.
 type Client struct {
-	Socket  string
-	Timeout time.Duration
+	Socket     string
+	Token      string
+	SidecarUID uint32
+	Timeout    time.Duration
 }
 
-// VerifyLayout checks the socket directory and trusted socket carry the
-// DD-03 ownership and modes before anything is sent: the directory
-// owner:0 0711, trusted.sock owner:0 0660, both owned by the sidecar UID.
-func (c *Client) VerifyLayout(sidecarUID uint32) error {
-	check := func(path string, group uint32, mode os.FileMode, dir bool) error {
-		st, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		sys := st.Sys().(*syscall.Stat_t)
-		if st.IsDir() != dir || (!dir && st.Mode()&os.ModeSocket == 0) {
-			return fmt.Errorf("%s: unexpected file type", path)
-		}
-		if sys.Uid != sidecarUID || sys.Gid != group || st.Mode().Perm() != mode {
-			return fmt.Errorf("%s is %d:%d %o, expected %d:%d %o", path, sys.Uid, sys.Gid, st.Mode().Perm(), sidecarUID, group, mode)
-		}
-		return nil
+// dial opens one connection and verifies the server's credentials before
+// anything is written on it.
+func (c *Client) dial(ctx context.Context) (net.Conn, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", c.Socket)
+	if err != nil {
+		return nil, err
 	}
-	if err := check(filepath.Dir(c.Socket), 0, 0o711, true); err != nil {
-		return err
+	uid, err := ServerUID(conn)
+	if err != nil {
+		conn.Close()
+		return nil, err
 	}
-	return check(c.Socket, 0, 0o660, false)
+	if uid != c.SidecarUID {
+		conn.Close()
+		return nil, fmt.Errorf("%w: uid %d, expected %d", ErrServerIdentity, uid, c.SidecarUID)
+	}
+	return conn, nil
+}
+
+// ServerUID reads the kernel-reported UID of the process on the other end
+// of a Unix connection (SO_PEERCRED).
+func ServerUID(conn net.Conn) (uint32, error) {
+	uc, ok := conn.(*net.UnixConn)
+	if !ok {
+		return 0, errors.New("not a unix connection")
+	}
+	raw, err := uc.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	var cred *unix.Ucred
+	var cerr error
+	if err := raw.Control(func(fd uintptr) { cred, cerr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED) }); err != nil {
+		return 0, err
+	}
+	if cerr != nil {
+		return 0, cerr
+	}
+	return cred.Uid, nil
 }
 
 // send makes one request on its own connection to the socket and returns
-// the response; a non-2xx answer is an *Error with the sidecar's code.
+// the response once its proof is verified; a non-2xx answer is an *Error
+// with the sidecar's code.
 func (c *Client) send(ctx context.Context, method, path string, headers map[string]string, body []byte) (*http.Response, error) {
+	nonce, err := peer.Nonce()
+	if err != nil {
+		return nil, err
+	}
 	transport := &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "unix", c.Socket)
-		},
+		DialContext:       func(ctx context.Context, _, _ string) (net.Conn, error) { return c.dial(ctx) },
 		DisableKeepAlives: true, MaxConnsPerHost: 1,
 	}
 	defer transport.CloseIdleConnections()
@@ -79,9 +117,15 @@ func (c *Client) send(ctx context.Context, method, path string, headers map[stri
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+	req.Header.Set(peer.HeaderToken, c.Token)
+	req.Header.Set(peer.HeaderNonce, nonce)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("sidecar %s %s: %w", method, path, err)
+	}
+	if !peer.ProofMatches(c.Token, nonce, resp.Header.Get(peer.HeaderProof)) {
+		resp.Body.Close()
+		return nil, fmt.Errorf("sidecar %s %s (status %d): %w", method, path, resp.StatusCode, ErrSidecarProof)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		defer resp.Body.Close()
@@ -144,12 +188,15 @@ func (c *Client) Scope(ctx context.Context) (Scope, []string, error) {
 }
 
 // AwaitScope polls Scope until it resolves, a definitive refusal is
-// answered or ctx ends.
+// answered or ctx ends. A proof or server-identity failure is definitive.
 func (c *Client) AwaitScope(ctx context.Context, every time.Duration, log func(string)) (Scope, []string, error) {
 	for {
 		s, inputs, err := c.Scope(ctx)
 		if err == nil {
 			return s, inputs, nil
+		}
+		if errors.Is(err, ErrSidecarProof) || errors.Is(err, ErrServerIdentity) {
+			return Scope{}, nil, err
 		}
 		var e *Error
 		if errors.As(err, &e) && e.Code != "SCOPE_UNAVAILABLE" && e.Code != "DEPENDENCY_UNAVAILABLE" {
@@ -244,16 +291,23 @@ func (c *Client) Submit(ctx context.Context, verdict, failureCode, observer stri
 	return s, err
 }
 
-// WaitFor waits until the trusted socket exists (the sidecar container
-// started) or the deadline passes.
+// WaitFor waits until the trusted name accepts a connection from the
+// sidecar's UID (the sidecar container started and bound its sockets) or
+// the deadline passes. A connection refused or a missing name is "not
+// yet"; a name held by another identity is refused at once.
 func (c *Client) WaitFor(ctx context.Context, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		if st, err := os.Lstat(c.Socket); err == nil && st.Mode()&os.ModeSocket != 0 {
+		conn, err := c.dial(ctx)
+		if err == nil {
+			conn.Close()
 			return nil
 		}
+		if errors.Is(err, ErrServerIdentity) {
+			return err
+		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("trusted socket %s did not appear within %s", c.Socket, timeout)
+			return fmt.Errorf("trusted socket %s did not appear within %s (last: %v)", c.Socket, timeout, err)
 		}
 		select {
 		case <-ctx.Done():
