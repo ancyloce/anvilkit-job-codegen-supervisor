@@ -20,7 +20,7 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/anvilkit-codegen-supervisor ./cm
 
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 RUN addgroup -g 10001 candidate && adduser -D -H -u 10001 -G candidate -s /sbin/nologin candidate \
- && mkdir -p /anvilkit/agent /anvilkit/fixtures /anvilkit/verdict /workspace /run/anvilkit /etc/anvilkit/anvilkit-codegen \
+ && mkdir -p /anvilkit/agent /anvilkit/fixtures /anvilkit/verdict /workspace /etc/anvilkit/anvilkit-codegen \
  && chmod 0700 /anvilkit/agent /anvilkit/fixtures /etc/anvilkit/anvilkit-codegen
 COPY --from=build /out/anvilkit-codegen-supervisor /out/anvilkit-codegen-candidate /usr/local/bin/
 COPY --chmod=0600 config.yaml /etc/anvilkit/anvilkit-codegen/config.yaml

@@ -2,12 +2,13 @@
 # baked into the image at /etc/anvilkit/anvilkit-codegen/config.yaml,
 # root-owned and unreadable by the candidate UID). Precedence is defaults <
 # this file < the launch facts the Job template injects (ANVILKIT_LAUNCH_ID,
-# ANVILKIT_ATTEMPT_ID, ANVILKIT_LAUNCH_ENVELOPE); no other environment
-# variable is accepted and the launch facts are refused inside this file.
+# ANVILKIT_ATTEMPT_ID, ANVILKIT_LAUNCH_ENVELOPE and the per-launch
+# ANVILKIT_LAUNCH_SECRET of DEC-045, a Secret reference in the template);
+# no other environment variable is accepted and the launch facts are
+# refused inside this file.
 paths:
   workspace: /workspace            # emptyDir; the candidate creates and owns /workspace/w
   verdict: /anvilkit/verdict       # emptyDir; chmod 0700 by the supervisor before the candidate starts
-  sockets: /run/anvilkit/sockets   # the sidecar's directory (read-only mount here)
   agent_dir: /anvilkit/agent       # explicit read-only trusted resources (root 0700)
   fixtures: /anvilkit/fixtures     # protected inputs of the fixed task (root 0700)
   termination_log: /dev/termination-log
@@ -19,7 +20,13 @@ candidate:
   max_output_bytes: 8388608
   probe_targets: ["127.0.0.1:9", "[::1]:9", "169.254.169.254:80"]
 sidecar:
-  uid: 10002
+  uid: 10002                    # the server identity verified on every connection (SO_PEERCRED)
+  # DEC-045: the sidecar's abstract-namespace sockets inside the Pod (a
+  # leading '@' is the abstract namespace; no directory, no file, no shared
+  # volume). Every request carries the socket's peer token derived from the
+  # launch secret and a nonce; every answer carries the sidecar's proof.
+  trusted_socket: "@anvilkit/trusted"
+  candidate_socket: "@anvilkit/candidate"
   wait: 60s
   request_timeout: 60s
   max_input_bytes: 67108864     # bound of one input loaded through the sidecar (P13-04)
