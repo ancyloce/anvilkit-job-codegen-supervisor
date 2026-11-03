@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/peer"
 	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/process"
 	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/protocol"
 )
@@ -190,7 +191,9 @@ func (s *Supervisor) runTeam(ctx context.Context, f launchFacts, summary *Summar
 }
 
 // coordinatorEnv is the coordinator's complete environment: the reviewed
-// configuration's paths and the launch envelope, nothing inherited.
+// configuration's paths, the launch envelope, the sidecar's socket names
+// and the trusted socket's token (DEC-045; never the launch secret, never
+// the candidate's token), nothing inherited.
 func (s *Supervisor) coordinatorEnv(teamDir string) []string {
 	cfg := s.Config
 	env := []string{
@@ -198,7 +201,8 @@ func (s *Supervisor) coordinatorEnv(teamDir string) []string {
 		"ANVILKIT_TEAM_CONFIG=" + cfg.Team.Config, "ANVILKIT_AGENT_DIR=" + cfg.Paths.AgentDir,
 		"ANVILKIT_WORKSPACE=" + cfg.Paths.Workspace, "ANVILKIT_VERDICT_DIR=" + cfg.Paths.Verdict,
 		"ANVILKIT_INPUT_DIR=" + s.inputDir(),
-		"ANVILKIT_TRUSTED_SOCKET=" + filepath.Join(cfg.Paths.Sockets, "trusted.sock"), "ANVILKIT_CANDIDATE_SOCKET=" + filepath.Join(cfg.Paths.Sockets, "candidate.sock"),
+		"ANVILKIT_TRUSTED_SOCKET=" + cfg.Sidecar.TrustedSocket, "ANVILKIT_CANDIDATE_SOCKET=" + cfg.Sidecar.CandidateSocket,
+		peer.EnvToken + "=" + s.token(peer.RoleTrusted),
 		"ANVILKIT_LAUNCH_ENVELOPE=" + cfg.Launch.Envelope, "ANVILKIT_OBSERVER_IDENTITY=" + cfg.Team.Observer,
 		"ANVILKIT_CODEGEN_TEAM_CONTRACTS_DIR=" + cfg.Team.ContractsDir, "ANVILKIT_VALIDATOR_CONTRACTS_DIR=" + cfg.Team.ContractsDir,
 	}

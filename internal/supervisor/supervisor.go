@@ -22,6 +22,7 @@ import (
 
 	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/config"
 	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/launch"
+	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/peer"
 	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/privdrop"
 	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/process"
 	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/sidecar"
@@ -127,12 +128,9 @@ func (s *Supervisor) run(ctx context.Context, summary *Summary) error {
 		return err
 	}
 
-	client := &sidecar.Client{Socket: filepath.Join(cfg.Paths.Sockets, "trusted.sock"), Timeout: cfg.Sidecar.RequestTimeout}
+	client := &sidecar.Client{Socket: cfg.Sidecar.TrustedSocket, Token: s.token(peer.RoleTrusted), SidecarUID: cfg.Sidecar.UID, Timeout: cfg.Sidecar.RequestTimeout}
 	if err := client.WaitFor(ctx, cfg.Sidecar.Wait); err != nil {
 		return err
-	}
-	if err := client.VerifyLayout(cfg.Sidecar.UID); err != nil {
-		return fmt.Errorf("sidecar socket layout: %w", err)
 	}
 	scope, _, err := client.AwaitScope(ctx, 2*time.Second, func(m string) { s.Log.Info("waiting for the execution scope", "reason", m) })
 	if err != nil {
@@ -197,15 +195,29 @@ func (s *Supervisor) prepareLayout() error {
 	return nil
 }
 
+// token derives one socket role's peer token from the launch secret
+// (DEC-045 B2); the secret itself never leaves this process.
+func (s *Supervisor) token(role string) string {
+	secret, err := peer.ParseSecret(s.Config.Launch.Secret)
+	if err != nil {
+		// The configuration refused to load without a well-formed secret;
+		// an unusable token refuses every request rather than any.
+		return ""
+	}
+	return peer.Token(secret, role)
+}
+
 // candidateEnv is the environment every candidate gets: a fixed PATH, its
-// own tree as HOME, the workspace and input locations and the sidecar
-// sockets it may (candidate) and may not (trusted) reach.
+// own tree as HOME, the workspace and input locations, the sidecar sockets
+// it may (candidate) and may not (trusted) reach, and the candidate
+// socket's token (never the trusted one, never the secret).
 func (s *Supervisor) candidateEnv(extra ...string) []string {
 	cfg := s.Config
 	return append([]string{
 		"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + filepath.Join(cfg.Paths.Workspace, "w"),
 		"ANVILKIT_WORKSPACE=" + cfg.Paths.Workspace, "ANVILKIT_INPUT_DIR=" + s.inputDir(),
-		"ANVILKIT_CANDIDATE_SOCKET=" + filepath.Join(cfg.Paths.Sockets, "candidate.sock"), "ANVILKIT_TRUSTED_SOCKET=" + filepath.Join(cfg.Paths.Sockets, "trusted.sock"),
+		"ANVILKIT_CANDIDATE_SOCKET=" + cfg.Sidecar.CandidateSocket, "ANVILKIT_TRUSTED_SOCKET=" + cfg.Sidecar.TrustedSocket,
+		peer.EnvToken + "=" + s.token(peer.RoleCandidate),
 	}, extra...)
 }
 

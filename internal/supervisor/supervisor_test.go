@@ -27,6 +27,7 @@ import (
 
 	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/config"
 	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/launch"
+	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/peer"
 	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/process"
 	"github.com/ancyloce/anvilkit-job-codegen-supervisor/internal/supervisor"
 )
@@ -288,32 +289,78 @@ func (f *fakeSidecar) serve(t *testing.T, dir string) {
 	})
 	candidate.HandleFunc("POST /v1/model/relay", func(w http.ResponseWriter, r *http.Request) { fail(w, 503, "DEPENDENCY_UNAVAILABLE") })
 	candidate.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fail(w, 403, "ROUTE_FORBIDDEN") })
-	guard := func(uid uint32, h http.Handler) http.Handler {
+	// The DEC-045 guard order: a peer of the wrong UID is closed at accept
+	// (never answered), then nonce, then token, then the proof on every
+	// answer of a request that passed.
+	secret, err := peer.ParseSecret(testSecret)
+	require.NoError(t, err)
+	guard := func(uid uint32, token string, h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if got, _ := r.Context().Value(uidKey{}).(uint32); got != uid {
-				fail(w, 403, "PEER_UID_MISMATCH")
+				fail(w, 403, "PEER_UID_MISMATCH") // unreachable: closed at accept below
 				return
 			}
+			nonce := r.Header.Get(peer.HeaderNonce)
+			if !peer.ValidNonce(nonce) {
+				fail(w, 400, "PEER_NONCE_INVALID")
+				return
+			}
+			if !peer.TokenMatches(token, r.Header.Get(peer.HeaderToken)) {
+				fail(w, 403, "PEER_TOKEN_MISMATCH")
+				return
+			}
+			proof, _ := peer.Proof(token, nonce)
+			w.Header().Set(peer.HeaderProof, proof)
 			h.ServeHTTP(w, r)
 		})
 	}
-	listen := func(name string, group uint32, h http.Handler) {
-		path := filepath.Join(dir, name)
-		l, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	// dir is the abstract-namespace prefix of the two names (no file, no
+	// directory, no mode: DEC-045). The names are bound with the sidecar's
+	// effective UID, which Linux records as the listener's credentials at
+	// listen(): the supervisor verifies that identity (SO_PEERCRED) on
+	// every connection before it sends anything.
+	listen := func(name string, uid uint32, h http.Handler) {
+		require.NoError(t, syscall.Seteuid(sidecarUID))
+		l, err := net.ListenUnix("unix", &net.UnixAddr{Name: dir + "/" + name, Net: "unix"})
+		require.NoError(t, syscall.Seteuid(0))
 		require.NoError(t, err)
-		require.NoError(t, os.Chown(path, sidecarUID, int(group)))
-		require.NoError(t, os.Chmod(path, 0o660))
 		srv := &http.Server{Handler: h, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			uid, _ := peerUID(c)
 			return context.WithValue(ctx, uidKey{}, uid)
 		}}
 		srv.SetKeepAlivesEnabled(false)
-		go srv.Serve(l)
+		go srv.Serve(&uidListener{Listener: l, uid: uid})
 		t.Cleanup(func() { srv.Close() })
 	}
-	listen("trusted.sock", 0, guard(0, trusted))
-	listen("candidate.sock", candidateUID, guard(candidateUID, candidate))
+	listen("trusted", 0, guard(0, peer.Token(secret, peer.RoleTrusted), trusted))
+	listen("candidate", candidateUID, guard(candidateUID, peer.Token(secret, peer.RoleCandidate), candidate))
 }
+
+// uidListener closes a peer of the wrong UID at accept, as the real
+// sidecar's listener does: such a peer gets no HTTP answer at all.
+type uidListener struct {
+	net.Listener
+	uid uint32
+}
+
+func (l *uidListener) Accept() (net.Conn, error) {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		if got, ok := peerUID(c); !ok || got != l.uid {
+			c.Close()
+			continue
+		}
+		return c, nil
+	}
+}
+
+// testSecret is the launch secret of every test launch (DEC-045 B2): the
+// supervisor receives it through ANVILKIT_LAUNCH_SECRET, the fake sidecar
+// derives the same tokens from it.
+const testSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 type layout struct {
 	root, workspace, verdict, sockets, agent, fixtures, termination, candidate, cfg, helper string
@@ -335,14 +382,13 @@ func prepare(t *testing.T) layout {
 	require.NoError(t, err)
 	t.Cleanup(func() { os.RemoveAll(root) })
 	require.NoError(t, os.Chmod(root, 0o755))
-	l := layout{root: root, workspace: filepath.Join(root, "workspace"), verdict: filepath.Join(root, "verdict"), sockets: filepath.Join(root, "run", "sockets"), agent: filepath.Join(root, "agent"), fixtures: filepath.Join(root, "fixtures"), termination: filepath.Join(root, "termination-log"), candidate: filepath.Join(root, "anvilkit-codegen-candidate"), cfg: filepath.Join(root, "config.yaml")}
+	// sockets is the abstract-namespace prefix of this launch's two socket
+	// names (DEC-045): unique per test, nothing on the file system.
+	l := layout{root: root, workspace: filepath.Join(root, "workspace"), verdict: filepath.Join(root, "verdict"), sockets: "@" + filepath.Base(root), agent: filepath.Join(root, "agent"), fixtures: filepath.Join(root, "fixtures"), termination: filepath.Join(root, "termination-log"), candidate: filepath.Join(root, "anvilkit-codegen-candidate"), cfg: filepath.Join(root, "config.yaml")}
 	for _, d := range []string{l.workspace, l.verdict} {
 		require.NoError(t, os.Mkdir(d, 0o777))
 		require.NoError(t, os.Chmod(d, 0o777)) // an emptyDir
 	}
-	require.NoError(t, os.MkdirAll(l.sockets, 0o711))
-	require.NoError(t, os.Chown(l.sockets, sidecarUID, 0))
-	require.NoError(t, os.Chmod(l.sockets, 0o711))
 	require.NoError(t, os.Mkdir(l.agent, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(l.agent, "resources.json"), []byte(`{"schemaVersion":1,"systemPrompt":"trusted","tools":[],"skills":[]}`), 0o600))
 	require.NoError(t, os.Mkdir(l.fixtures, 0o700))
@@ -362,7 +408,7 @@ func prepare(t *testing.T) layout {
 
 func writeConfig(t *testing.T, l layout, candidateTimeout string) {
 	t.Helper()
-	require.NoError(t, os.WriteFile(l.cfg, []byte(fmt.Sprintf("paths:\n  workspace: %s\n  verdict: %s\n  sockets: %s\n  agent_dir: %s\n  fixtures: %s\n  termination_log: %s\ncandidate:\n  program: %s\n  timeout: %s\nsidecar:\n  wait: 10s\n", l.workspace, l.verdict, l.sockets, l.agent, l.fixtures, l.termination, l.candidate, candidateTimeout)), 0o600))
+	require.NoError(t, os.WriteFile(l.cfg, []byte(fmt.Sprintf("paths:\n  workspace: %s\n  verdict: %s\n  agent_dir: %s\n  fixtures: %s\n  termination_log: %s\ncandidate:\n  program: %s\n  timeout: %s\nsidecar:\n  wait: 10s\n  trusted_socket: '%s/trusted'\n  candidate_socket: '%s/candidate'\n", l.workspace, l.verdict, l.agent, l.fixtures, l.termination, l.candidate, candidateTimeout, l.sockets, l.sockets)), 0o600))
 }
 
 // misbehavingCandidate installs the stop tests' candidate program: a shell
@@ -410,7 +456,7 @@ func envelopeFor(deadline time.Time) string {
 // SETUID, SETGID and SETPCAP and nothing else, as UID 0 with no_new_privs.
 func supervisorCommand(l layout, env string) *exec.Cmd {
 	cmd := exec.Command(l.helper, process.SupervisorExecCommand, "--", l.helper)
-	cmd.Env = []string{"HARNESS_HELPER=supervise", "ANVILKIT_CODEGEN_CONFIG=" + l.cfg, "ANVILKIT_LAUNCH_ID=lch_1", "ANVILKIT_ATTEMPT_ID=att_1", "ANVILKIT_LAUNCH_ENVELOPE=" + env, "PATH=/usr/bin:/bin"}
+	cmd.Env = []string{"HARNESS_HELPER=supervise", "ANVILKIT_CODEGEN_CONFIG=" + l.cfg, "ANVILKIT_LAUNCH_ID=lch_1", "ANVILKIT_ATTEMPT_ID=att_1", "ANVILKIT_LAUNCH_ENVELOPE=" + env, "ANVILKIT_LAUNCH_SECRET=" + testSecret, "PATH=/usr/bin:/bin"}
 	return cmd
 }
 
@@ -533,7 +579,17 @@ func TestTrustedFlowWithFixedCandidate(t *testing.T) {
 	require.Equal(t, "EACCES", o["write:manifest.json"], "a forged manifest cannot be written")
 	require.Equal(t, "EACCES", o["write:AGENTS.md"])
 	require.Equal(t, "EACCES", o["write:fixed-input"], "staged inputs are read-only")
-	require.Equal(t, "EACCES", o["connect:trusted.sock"], "the trusted socket is not reachable")
+	// The trusted name is reachable in the abstract namespace, and the
+	// sidecar closes the candidate's identity at accept, unanswered
+	// (DEC-045); the server behind the candidate name carries the sidecar's
+	// UID; the second binding refuses a wrong token and a missing nonce and
+	// proves every served answer.
+	require.Equal(t, "CONNECTED", o["connect:trusted"])
+	require.Equal(t, "CLOSED", o["trusted:scope"], "the trusted socket closes the candidate unanswered")
+	require.Equal(t, "10002", o["server:uid"])
+	require.Equal(t, "403 PEER_TOKEN_MISMATCH", o["candidate:wrong-token"])
+	require.Equal(t, "400 PEER_NONCE_INVALID", o["candidate:no-nonce"])
+	require.Equal(t, "ok", o["candidate:proof"])
 	require.Equal(t, "200 ", o["candidate:inputs-permitted"])
 	require.Equal(t, "404 NOT_FOUND", o["candidate:inputs-other"])
 	require.Equal(t, "403 ROUTE_FORBIDDEN", o["candidate:results"])
@@ -617,7 +673,7 @@ func TestPrivilegeDropFailureDeniesExecution(t *testing.T) {
 	fs := &fakeSidecar{scope: scopeFor(deadline), inputs: map[string][]byte{}, stageID: "stg_x"}
 	fs.serve(t, l.sockets)
 	cmd := exec.Command(l.helper)
-	cmd.Env = []string{"HARNESS_HELPER=supervise", "ANVILKIT_CODEGEN_CONFIG=" + l.cfg, "ANVILKIT_LAUNCH_ID=lch_1", "ANVILKIT_ATTEMPT_ID=att_1", "ANVILKIT_LAUNCH_ENVELOPE=" + envelopeFor(deadline), "PATH=/usr/bin:/bin"}
+	cmd.Env = []string{"HARNESS_HELPER=supervise", "ANVILKIT_CODEGEN_CONFIG=" + l.cfg, "ANVILKIT_LAUNCH_ID=lch_1", "ANVILKIT_ATTEMPT_ID=att_1", "ANVILKIT_LAUNCH_ENVELOPE=" + envelopeFor(deadline), "ANVILKIT_LAUNCH_SECRET=" + testSecret, "PATH=/usr/bin:/bin"}
 	out, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
 	require.ErrorAs(t, err, &exit, string(out))
@@ -779,7 +835,7 @@ func teamLayout(t *testing.T, l layout, teamTimeout, candidateTimeout string) {
 	require.NoError(t, os.WriteFile(coordinator, []byte("#!/bin/sh\numask 022\nmkdir -p \"$ANVILKIT_WORKSPACE/round/1\"\nprintf '{\"type\":\"run-candidate\",\"protocolVersion\":1,\"requestId\":1,\"round\":1,\"roundDir\":\"%s/round/1\"}\\n' \"$ANVILKIT_WORKSPACE\"\nread answer\nprintf '%s\\n' \"$answer\" > \"$ANVILKIT_VERDICT_DIR/team/answer.json\"\nexit 0\n"), 0o755))
 	require.NoError(t, os.WriteFile(coder, []byte("#!/bin/sh\nmkdir -p \"$ANVILKIT_WORKSPACE/w\"\necho $$ > \"$ANVILKIT_WORKSPACE/w/pid\"\nwhile true; do date +%s%N >> \"$ANVILKIT_WORKSPACE/w/heartbeat\"; sleep 0.1; done\n"), 0o755))
 	require.NoError(t, os.WriteFile(teamConfig, []byte("schemaVersion: 1\n"), 0o600))
-	require.NoError(t, os.WriteFile(l.cfg, []byte(fmt.Sprintf("paths:\n  workspace: %s\n  verdict: %s\n  sockets: %s\n  agent_dir: %s\n  fixtures: %s\n  termination_log: %s\ncandidate:\n  program: %s\n  timeout: %s\nsidecar:\n  wait: 10s\nteam:\n  enabled: true\n  coordinator: [%s]\n  coder: [%s]\n  config: %s\n  contracts_dir: %s\n  timeout: %s\n  observer: anvilkit-codegen-team\n", l.workspace, l.verdict, l.sockets, l.agent, l.fixtures, l.termination, l.candidate, candidateTimeout, coordinator, coder, teamConfig, l.root, teamTimeout)), 0o600))
+	require.NoError(t, os.WriteFile(l.cfg, []byte(fmt.Sprintf("paths:\n  workspace: %s\n  verdict: %s\n  agent_dir: %s\n  fixtures: %s\n  termination_log: %s\ncandidate:\n  program: %s\n  timeout: %s\nsidecar:\n  wait: 10s\n  trusted_socket: '%s/trusted'\n  candidate_socket: '%s/candidate'\nteam:\n  enabled: true\n  coordinator: [%s]\n  coder: [%s]\n  config: %s\n  contracts_dir: %s\n  timeout: %s\n  observer: anvilkit-codegen-team\n", l.workspace, l.verdict, l.agent, l.fixtures, l.termination, l.candidate, candidateTimeout, l.sockets, l.sockets, coordinator, coder, teamConfig, l.root, teamTimeout)), 0o600))
 }
 
 // heartbeatBounds reads the coder's heartbeat file: the number of lines and
