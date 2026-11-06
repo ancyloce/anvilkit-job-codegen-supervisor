@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -249,8 +250,12 @@ func httpOver(socket, method, path, body, token string, withNonce bool) (httpAns
 }
 
 // rawExchange writes one raw request on a fresh connection and classifies
-// what came back: CLOSED (end of stream without a byte), SERVED (bytes), or
-// the error.
+// what came back: CLOSED (the peer closed without answering: end of stream
+// without a byte, or the request's write refused because the peer had
+// already closed), SERVED (bytes), or the error. A peer that closes at
+// accept (DEC-045) can win the race with the write, which then fails with
+// EPIPE or ECONNRESET instead of the read seeing end of stream; both are the
+// same closed, unanswered connection.
 func rawExchange(socket string, request []byte) string {
 	conn, err := net.DialTimeout("unix", socket, 2*time.Second)
 	if err != nil {
@@ -258,6 +263,9 @@ func rawExchange(socket string, request []byte) string {
 	}
 	defer conn.Close()
 	if _, err := conn.Write(request); err != nil {
+		if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+			return "CLOSED"
+		}
 		return errString(err)
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
